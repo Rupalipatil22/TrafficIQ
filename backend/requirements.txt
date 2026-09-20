@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+easyocr
+kagglehub
+opencv-python-headless
+numpy
+requests

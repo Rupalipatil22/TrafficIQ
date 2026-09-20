@@ -1,13 +1,13 @@
 import os
 import re
 import glob
+import sqlite3
 import cv2
-import psycopg2
 import easyocr
 import kagglehub
 
-DB_URI = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/trafficiq")
-conn = psycopg2.connect(DB_URI)
+DB_FILE = "trafficiq.db"
+conn = sqlite3.connect(DB_FILE)
 cursor = conn.cursor()
 
 def clean_indian_plate(raw_text):
@@ -60,32 +60,32 @@ for img_path in image_paths:
         cleaned = clean_indian_plate(raw_text)
         if conf > 0.40 and len(cleaned) >= 6:
             cam = cameras[ingested_count % len(cameras)]
-            offset_minutes = (MAX_SAMPLES - ingested_count) * 8
             cursor.execute("""
                 INSERT INTO vehicle_sightings 
-                (plate_number, camera_id, sighting_time, confidence, speed_estimate_kmh, geom)
-                VALUES (%s, %s, NOW() - (%s * INTERVAL '1 minute'), %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-            """, (cleaned, cam["id"], offset_minutes, float(conf), 42.0 + (ingested_count * 1.5), cam["lng"], cam["lat"]))
+                (plate_number, camera_id, sighting_time, confidence, speed_estimate_kmh, lat, lng)
+                VALUES (?, ?, time('now', ?), ?, ?, ?, ?)
+            """, (cleaned, cam["id"], f"-{(MAX_SAMPLES - ingested_count) * 8} minutes", float(conf), 42.0 + (ingested_count * 1.5), cam["lat"], cam["lng"]))
             conn.commit()
             print(f"[+] Ingested: {cleaned} | Conf: {conf:.2f} | Cam: {cam['id']}")
             ingested_count += 1
             break
 
+# Ensure demo route exists
 demo_route = [
-    ("TS09AB1234", "CAM-01", 35, 48.0, 78.3489, 17.4401),
-    ("TS09AB1234", "CAM-03", 22, 53.0, 78.3808, 17.4504),
-    ("TS09AB1234", "CAM-05", 8,  42.0, 78.4073, 17.4319),
-    ("DL01XY9999", "CAM-02", 3,  65.0, 78.4983, 17.4399),
+    ("TS09AB1234", "CAM-01", "10:20 AM", 48.0, 17.4401, 78.3489),
+    ("TS09AB1234", "CAM-03", "10:31 AM", 53.0, 17.4504, 78.3808),
+    ("TS09AB1234", "CAM-05", "10:44 AM", 42.0, 17.4319, 78.4073),
+    ("DL01XY9999", "CAM-02", "11:05 AM", 65.0, 17.4399, 78.4983),
 ]
 
-for plate, cam, min_ago, spd, lng, lat in demo_route:
+for plate, cam, time_str, spd, lat, lng in demo_route:
     cursor.execute("""
         INSERT INTO vehicle_sightings 
-        (plate_number, camera_id, sighting_time, confidence, speed_estimate_kmh, geom)
-        VALUES (%s, %s, NOW() - (%s * INTERVAL '1 minute'), 0.96, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))
-    """, (plate, cam, min_ago, spd, lng, lat))
-conn.commit()
+        (plate_number, camera_id, sighting_time, confidence, speed_estimate_kmh, lat, lng)
+        VALUES (?, ?, ?, 0.96, ?, ?, ?)
+    """, (plate, cam, time_str, spd, lat, lng))
 
-print("[✓] Pipeline complete. Ingested records ready for query.")
+conn.commit()
+print("[✓] SQLite ingestion complete.")
 cursor.close()
 conn.close()
